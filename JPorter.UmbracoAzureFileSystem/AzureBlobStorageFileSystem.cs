@@ -8,6 +8,7 @@ using Microsoft.WindowsAzure.Storage;
 using Microsoft.WindowsAzure.Storage.Blob;
 using Umbraco.Core.IO;
 using Umbraco.Core;
+using System.Web.Hosting;
 
 namespace JPorter.UmbracoAzureFileSystem
 {
@@ -16,8 +17,8 @@ namespace JPorter.UmbracoAzureFileSystem
         readonly CloudBlobClient _client;
         readonly CloudBlobContainer _container;
 
-        internal string RootPath { get; private set; }
-        private readonly string _rootUrl; 
+        internal string RelativeAddress { get; private set; }
+        private readonly string _rootUrl;
 
         public AzureBlobStorageFileSystem(string connectionString, string containerName)
         {
@@ -27,16 +28,28 @@ namespace JPorter.UmbracoAzureFileSystem
             _container = _client.GetContainerReference(containerName);
             _container.CreateIfNotExists();
 
-            // d:\users\jonathan\documents\visual studio 14\Projects\UmbracoAzureTest\UmbracoAzureTest\masterpages
-            // "/masterpages"
-
-            // Base URI relative
-            // RootPath = containerName
-            // _rootUrl =  _client.BaseUri.ToString();
-           
             // Container Relative
-            RootPath = string.Empty;
+            RelativeAddress = string.Empty;
             _rootUrl = _container.Uri.ToString();
+        }
+
+        public AzureBlobStorageFileSystem(string connectionString, string containerName, string relativeAddress)
+            : this(connectionString, containerName)
+        {
+            RelativeAddress = relativeAddress;
+            _rootUrl = _container.GetDirectoryReference(relativeAddress).Uri.ToString();
+        }
+
+        public AzureBlobStorageFileSystem(string connectionString, string containerName, string relativeAddress, string rootUrl)
+            : this(connectionString, containerName, relativeAddress)
+        {
+            _rootUrl = rootUrl;
+        }
+
+        public ICloudPropertyProvider PropertyProvider
+        {
+            get;
+            set;
         }
 
         private ICloudBlob GetBlob(string path)
@@ -65,6 +78,8 @@ namespace JPorter.UmbracoAzureFileSystem
                 stream.Seek(0, 0);
 
             blob.UploadFromStream(stream);
+
+            PropertyProvider.SetProperties(blob);
         }
 
         public void DeleteDirectory(string path)
@@ -83,12 +98,16 @@ namespace JPorter.UmbracoAzureFileSystem
             }
 
             foreach (var blob in directory.ListBlobs(true).Cast<ICloudBlob>())
-                blob.DeleteIfExists();
+                DeleteFile(blob);
         }
 
         public void DeleteFile(string path)
         {
-            var blob = GetBlob(GetFullPath(path));
+            DeleteFile(GetBlob(GetFullPath(path)));
+        }
+
+        protected void DeleteFile(ICloudBlob blob)
+        {
             blob.DeleteIfExists();
         }
 
@@ -127,6 +146,7 @@ namespace JPorter.UmbracoAzureFileSystem
         {
             path = EnsureTrailingSeparator(GetFullPath(path));
 
+            var prefix = string.Empty;
             var pattern = Regex.Replace(filter, @"[\*\?]|.+?", (m) =>
             {
                 switch (m.Value)
@@ -136,18 +156,20 @@ namespace JPorter.UmbracoAzureFileSystem
                     case "?":
                         return ".?";
                     default:
+                        if (m.Index == 0)
+                            prefix = m.Value;
                         return Regex.Escape(m.Value);
                 }
             });
-           
-            var blobs = GetDirectory(path).ListBlobs();
-            return blobs.OfType<ICloudBlob>().Where(blob => Regex.IsMatch(blob.Name, pattern)).Select(blob => GetRelativePath(blob.Name));
+
+            var directory = GetDirectory(path);
+            return directory.Container.ListBlobs(directory.Prefix + prefix).OfType<ICloudBlob>().Where(blob => Regex.IsMatch(blob.Name, pattern)).Select(blob => GetRelativePath(blob.Name));
         }
 
         public string GetFullPath(string path)
         {
-            return !path.StartsWith(RootPath)
-            ? Path.Combine(RootPath, path)
+            return !path.StartsWith(RelativeAddress)
+            ? Path.Combine(RelativeAddress, path)
             : path;
         }
 
@@ -162,7 +184,7 @@ namespace JPorter.UmbracoAzureFileSystem
             var relativePath = fullPathOrUrl
             .TrimStart(_rootUrl)
             .Replace('/', Path.DirectorySeparatorChar)
-            .TrimStart(RootPath)
+            .TrimStart(RelativeAddress)
             .TrimStart(Path.DirectorySeparatorChar);
             return relativePath;
         }
