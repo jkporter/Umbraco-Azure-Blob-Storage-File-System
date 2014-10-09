@@ -79,7 +79,8 @@ namespace JPorter.UmbracoAzureFileSystem
 
             blob.UploadFromStream(stream);
 
-            PropertyProvider.SetProperties(blob);
+            if(PropertyProvider != null)
+                PropertyProvider.SetProperties(blob);
         }
 
         public void DeleteDirectory(string path)
