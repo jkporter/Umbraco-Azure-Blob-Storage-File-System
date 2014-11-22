@@ -7,8 +7,8 @@ using System.Threading.Tasks;
 
 namespace JPorter.UmbracoAzureFileSystem
 {
-    interface ICloudPropertyProvider
+    public interface ICloudPropertyProvider
     {
-        public void SetProperties(ICloudBlob blob);
+        void SetProperties(ICloudBlob blob);
     }
 }

@@ -1,4 +1,6 @@
-﻿using Microsoft.WindowsAzure.Storage.Blob;
+﻿using System.IO;
+using Microsoft.Web.Administration;
+using Microsoft.WindowsAzure.Storage.Blob;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -23,7 +25,7 @@ namespace JPorter.UmbracoAzureFileSystem
                     staticContentCollection.SingleOrDefault(
                         c =>
                             c.GetAttributeValue("fileExtension") != null &&
-                            String.Compare(c.GetAttributeValue("fileExtension").ToString(), Path.GetExtension(path),
+                            String.Compare(c.GetAttributeValue("fileExtension").ToString(), Path.GetExtension(blob.Name),
                                 StringComparison.OrdinalIgnoreCase) == 0);
 
                 if (mimeMap == null) return;

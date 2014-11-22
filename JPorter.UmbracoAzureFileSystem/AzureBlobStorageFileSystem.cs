@@ -8,24 +8,32 @@ using Microsoft.WindowsAzure.Storage;
 using Microsoft.WindowsAzure.Storage.Blob;
 using Umbraco.Core.IO;
 using Umbraco.Core;
-using System.Web.Hosting;
+using System.Net.Http.Headers;
 
 namespace JPorter.UmbracoAzureFileSystem
 {
     public class AzureBlobStorageFileSystem : IFileSystem
     {
-        readonly CloudBlobClient _client;
         readonly CloudBlobContainer _container;
+
+        readonly DateTimeOffset _missingReturnDate = new DateTimeOffset(1601, 1, 1, 0, 0, 0, new TimeSpan(0));
 
         internal string RelativeAddress { get; private set; }
         private readonly string _rootUrl;
 
+        public AzureBlobStorageFileSystem(string connectionString, string containerName, string relativeAddress, string rootUrl)
+            : this(connectionString, containerName)
+        {
+            RelativeAddress = relativeAddress;
+            _rootUrl = rootUrl;
+        }
+
         public AzureBlobStorageFileSystem(string connectionString, string containerName)
         {
             var storageAccount = CloudStorageAccount.Parse(connectionString);
-            _client = storageAccount.CreateCloudBlobClient();
+            var client = storageAccount.CreateCloudBlobClient();
 
-            _container = _client.GetContainerReference(containerName);
+            _container = client.GetContainerReference(containerName);
             _container.CreateIfNotExists();
 
             // Container Relative
@@ -38,12 +46,6 @@ namespace JPorter.UmbracoAzureFileSystem
         {
             RelativeAddress = relativeAddress;
             _rootUrl = _container.GetDirectoryReference(relativeAddress).Uri.ToString();
-        }
-
-        public AzureBlobStorageFileSystem(string connectionString, string containerName, string relativeAddress, string rootUrl)
-            : this(connectionString, containerName, relativeAddress)
-        {
-            _rootUrl = rootUrl;
         }
 
         public ICloudPropertyProvider PropertyProvider
@@ -79,8 +81,17 @@ namespace JPorter.UmbracoAzureFileSystem
 
             blob.UploadFromStream(stream);
 
-            if(PropertyProvider != null)
-                PropertyProvider.SetProperties(blob);
+            ContentDispositionHeaderValue contentDispositionHeaderValue;
+            if (ContentDispositionHeaderValue.TryParse(blob.Properties.ContentDisposition,
+                out contentDispositionHeaderValue)) return;
+            contentDispositionHeaderValue = new ContentDispositionHeaderValue("inline")
+            {
+                CreationDate = blob.Properties.LastModified,
+                FileName = path,
+                FileNameStar = path
+            };
+            blob.Properties.ContentDisposition = contentDispositionHeaderValue.ToString();
+            blob.SetProperties();
         }
 
         public void DeleteDirectory(string path)
@@ -129,7 +140,16 @@ namespace JPorter.UmbracoAzureFileSystem
 
         public DateTimeOffset GetCreated(string path)
         {
-            throw new NotImplementedException();
+            var blob = GetBlob(GetFullPath(path));
+            if (!blob.Exists())
+                return _missingReturnDate;
+
+            ContentDispositionHeaderValue contentDispositionHeaderValue;
+            if (ContentDispositionHeaderValue.TryParse(blob.Properties.ContentDisposition,
+                out contentDispositionHeaderValue) && contentDispositionHeaderValue.CreationDate.HasValue)
+                return contentDispositionHeaderValue.CreationDate.Value;
+
+            throw new PlatformNotSupportedException();
         }
 
         public IEnumerable<string> GetDirectories(string path)
@@ -147,24 +167,31 @@ namespace JPorter.UmbracoAzureFileSystem
         {
             path = EnsureTrailingSeparator(GetFullPath(path));
 
-            var prefix = string.Empty;
-            var pattern = Regex.Replace(filter, @"[\*\?]|.+?", (m) =>
+            var pattern = Regex.Replace(filter, @"[\*\?]|[^\*\?]+", (m) =>
             {
                 switch (m.Value)
                 {
                     case "*":
-                        return ".*";
+                        return ".*?";
                     case "?":
-                        return ".?";
+                        return ".";
                     default:
                         if (m.Index == 0)
-                            prefix = m.Value;
+                        {
+                            path += m.Value;
+                            return string.Empty;
+                        }
+
                         return Regex.Escape(m.Value);
                 }
             });
 
             var directory = GetDirectory(path);
-            return directory.Container.ListBlobs(directory.Prefix + prefix).OfType<ICloudBlob>().Where(blob => Regex.IsMatch(blob.Name, pattern)).Select(blob => GetRelativePath(blob.Name));
+            return
+                directory.ListBlobs()
+                    .OfType<ICloudBlob>()
+                    .Where(blob => Regex.IsMatch(blob.Name, pattern))
+                    .Select(blob => GetRelativePath(blob.Name));
         }
 
         public string GetFullPath(string path)
@@ -177,11 +204,43 @@ namespace JPorter.UmbracoAzureFileSystem
         public DateTimeOffset GetLastModified(string path)
         {
             var blob = GetBlob(GetFullPath(path));
-            return blob.Properties.LastModified.GetValueOrDefault();
+            return GetLastModifed(blob);
+        }
+
+        protected DateTimeOffset GetLastModifed(CloudBlobDirectory directory)
+        {
+            return directory.ListBlobs(true).Cast<ICloudBlob>().Max(blob => GetLastModifed(blob));
+        }
+
+        protected DateTimeOffset GetLastModifed(ICloudBlob blob)
+        {
+            if (!blob.Exists())
+                return _missingReturnDate;
+
+            ContentDispositionHeaderValue contentDispositionHeaderValue;
+            if (ContentDispositionHeaderValue.TryParse(blob.Properties.ContentDisposition,
+                out contentDispositionHeaderValue) && contentDispositionHeaderValue.ModificationDate.HasValue)
+                return contentDispositionHeaderValue.ModificationDate.Value;
+
+            if (blob.Properties.LastModified.HasValue)
+                return blob.Properties.LastModified.Value;
+
+            throw new Exception();
         }
 
         public string GetRelativePath(string fullPathOrUrl)
         {
+            /* try
+            {
+                var uri = new Uri(fullPathOrUrl);
+                if (uri.IsAbsoluteUri)
+                    fullPathOrUrl = uri.AbsolutePath.Substring(uri.AbsolutePath.IndexOf('/', 1));
+            }
+            catch (Exception)
+            {
+
+            } */
+
             var relativePath = fullPathOrUrl
             .TrimStart(_rootUrl)
             .Replace('/', Path.DirectorySeparatorChar)
@@ -200,9 +259,9 @@ namespace JPorter.UmbracoAzureFileSystem
 
         public Stream OpenFile(string path)
         {
-            var fullPath = GetFullPath(path);
-            return GetBlob(fullPath).OpenRead();
+            return GetBlob(GetFullPath(path)).OpenRead();
         }
+
         protected string EnsureTrailingSeparator(string path)
         {
             if (!path.EndsWith(Path.DirectorySeparatorChar.ToString(CultureInfo.InvariantCulture), StringComparison.Ordinal))
