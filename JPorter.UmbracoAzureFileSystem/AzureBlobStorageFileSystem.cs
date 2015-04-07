@@ -54,7 +54,7 @@ namespace JPorter.UmbracoAzureFileSystem
             set;
         }
 
-        private ICloudBlob GetBlob(string path)
+        protected ICloudBlob GetBlob(string path)
         {
             return _container.GetBlockBlobReference(path.Replace(Path.DirectorySeparatorChar, '/'));
         }
@@ -130,7 +130,7 @@ namespace JPorter.UmbracoAzureFileSystem
 
         protected bool DirectoryExists(CloudBlobDirectory directory)
         {
-            return directory.ListBlobsSegmented(false, BlobListingDetails.None, 1, new BlobContinuationToken(), null, null).Results.Any();
+            return directory.ListBlobsSegmented(true, BlobListingDetails.None, 1, new BlobContinuationToken(), null, null).Results.Any();
         }
 
         public bool FileExists(string path)
@@ -166,6 +166,7 @@ namespace JPorter.UmbracoAzureFileSystem
         public IEnumerable<string> GetFiles(string path, string filter)
         {
             path = EnsureTrailingSeparator(GetFullPath(path));
+            string preWildCard = null;
 
             var pattern = Regex.Replace(filter, @"[\*\?]|[^\*\?]+", (m) =>
             {
@@ -176,13 +177,9 @@ namespace JPorter.UmbracoAzureFileSystem
                     case "?":
                         return ".";
                     default:
-                        if (m.Index == 0)
-                        {
-                            path += m.Value;
-                            return string.Empty;
-                        }
-
-                        return Regex.Escape(m.Value);
+                        if (m.Index != 0) return Regex.Escape(m.Value);
+                        preWildCard = m.Value;
+                        return string.Empty;
                 }
             });
 
@@ -190,7 +187,7 @@ namespace JPorter.UmbracoAzureFileSystem
             return
                 directory.ListBlobs()
                     .OfType<ICloudBlob>()
-                    .Where(blob => Regex.IsMatch(blob.Name, pattern))
+                    .Where(blob => Regex.IsMatch(blob.Name, Regex.Escape(preWildCard ?? string.Empty) + pattern, RegexOptions.Singleline))
                     .Select(blob => GetRelativePath(blob.Name));
         }
 
