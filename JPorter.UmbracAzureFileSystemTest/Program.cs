@@ -14,48 +14,26 @@ namespace JPorter.UmbracAzureFileSystemTest
     {
         static void Main(string[] args)
         {
-            /* IFileSystem fileSystem = new AzureBlobStorageFileSystem("DefaultEndpointsProtocol=https;AccountName=starbuckscoffeestories;AccountKey=XXRHauh+MLVFAPu+o+bHOjGhFD/3HMNu379KWz8V/3Pb0ZBYrjTSreO2KDYTQZo3GyrpiE9iMoxESlnVpSGfIA==", "media");
+            IFileSystem fileSystem = new AzureBlobStorageFileSystem("UseDevelopmentStorage=true;DevelopmentStorageProxyUri=http://127.0.0.1:10000/", "media");
 
-
-            foreach (
-                var d in
-                    Directory.EnumerateDirectories(
-                        @"D:\Users\Jonathan\Documents\Visual Studio 14\Projects\UmbracoAzureTest\UmbracoAzureTest\media\")
-                )
+            /* var d = new DirectoryInfo(@"args[0]");
+            foreach (var file in d.EnumerateFiles("*.*", SearchOption.AllDirectories))
             {
-                Console.WriteLine(d);
-            }
 
-            foreach (var dir in fileSystem.GetFiles("created-packages"))
-            {
-                Console.WriteLine(dir);
-            }
-            Console.Read(); */
-
-            var prefix = string.Empty;
-            var pattern = Regex.Replace("/Test/t?st.*", @"[\*\?]|[^\*\?]+", (m) =>
-            {
-                switch (m.Value)
+                using (var s = file.OpenRead())
                 {
-                    case "*":
-                        return ".*";
-                    case "?":
-                        return ".?";
-                    default:
-                        if (m.Index == 0)
-                        {
-                            prefix = m.Value;
-                            return string.Empty;
-                        }
-
-                        return Regex.Escape(m.Value);
+                    Console.WriteLine(file.FullName.Substring(d.FullName.Length + 1));
+                    fileSystem.AddFile(file.FullName.Substring(d.FullName.Length + 1), s);
                 }
-            });
+            } */
 
-            Console.WriteLine(prefix);
-            Console.WriteLine(pattern);
+
+            
+            foreach(var file in fileSystem.GetDirectories(string.Empty))
+                Console.WriteLine(file);
 
             Console.Read();
         }
+
     }
 }
