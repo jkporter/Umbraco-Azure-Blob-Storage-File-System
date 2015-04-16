@@ -165,9 +165,9 @@ namespace JPorter.UmbracoAzureFileSystem
 
         public IEnumerable<string> GetFiles(string path, string filter)
         {
-            path = EnsureTrailingSeparator(GetFullPath(path));
-            string preWildCard = null;
-
+            var directory = GetDirectory(EnsureTrailingSeparator(GetFullPath(path)));
+            
+            var preWildCard = string.Empty;
             var pattern = Regex.Replace(filter, @"[\*\?]|[^\*\?]+", (m) =>
             {
                 switch (m.Value)
@@ -183,19 +183,20 @@ namespace JPorter.UmbracoAzureFileSystem
                 }
             });
 
-            var directory = GetDirectory(path);
+            var wildcardRegex = new Regex("^" + Regex.Escape(directory.Prefix + preWildCard) + pattern + "$", RegexOptions.Singleline);
+
             return
                 directory.ListBlobs()
                     .OfType<ICloudBlob>()
-                    .Where(blob => Regex.IsMatch(blob.Name, Regex.Escape(preWildCard ?? string.Empty) + pattern, RegexOptions.Singleline))
+                    .Where(blob => wildcardRegex.IsMatch(blob.Name))
                     .Select(blob => GetRelativePath(blob.Name));
         }
 
         public string GetFullPath(string path)
         {
-            return !path.StartsWith(RelativeAddress)
-            ? Path.Combine(RelativeAddress, path)
-            : path;
+            return !string.IsNullOrEmpty(RelativeAddress) && !path.StartsWith(RelativeAddress)
+                ? Path.Combine(RelativeAddress, path)
+                : path;
         }
 
         public DateTimeOffset GetLastModified(string path)
@@ -206,7 +207,19 @@ namespace JPorter.UmbracoAzureFileSystem
 
         protected DateTimeOffset GetLastModifed(CloudBlobDirectory directory)
         {
-            return directory.ListBlobs(true).Cast<ICloudBlob>().Max(blob => GetLastModifed(blob));
+            var listBlobs = directory.ListBlobs(true).Cast<ICloudBlob>().GetEnumerator();
+            if(!listBlobs.MoveNext())
+                return _missingReturnDate;
+
+            var minLastModifedDate = _missingReturnDate;
+            do
+            {
+                var blobDate = GetLastModifed(listBlobs.Current);
+                if (blobDate < minLastModifedDate)
+                    minLastModifedDate = blobDate;
+            } while (listBlobs.MoveNext());
+
+            return minLastModifedDate;
         }
 
         protected DateTimeOffset GetLastModifed(ICloudBlob blob)
@@ -227,17 +240,6 @@ namespace JPorter.UmbracoAzureFileSystem
 
         public string GetRelativePath(string fullPathOrUrl)
         {
-            /* try
-            {
-                var uri = new Uri(fullPathOrUrl);
-                if (uri.IsAbsoluteUri)
-                    fullPathOrUrl = uri.AbsolutePath.Substring(uri.AbsolutePath.IndexOf('/', 1));
-            }
-            catch (Exception)
-            {
-
-            } */
-
             var relativePath = fullPathOrUrl
             .TrimStart(_rootUrl)
             .Replace('/', Path.DirectorySeparatorChar)
@@ -248,10 +250,11 @@ namespace JPorter.UmbracoAzureFileSystem
 
         public string GetUrl(string path)
         {
-            return _rootUrl.TrimEnd("/") + "/" + path
-            .TrimStart(Path.DirectorySeparatorChar)
-            .Replace(Path.DirectorySeparatorChar, '/')
-            .TrimEnd("/");
+            return _rootUrl.TrimEnd("/") + "/" +
+                   GetFullPath(path)
+                       .TrimStart(Path.DirectorySeparatorChar)
+                       .Replace(Path.DirectorySeparatorChar, '/')
+                       .TrimEnd("/");
         }
 
         public Stream OpenFile(string path)
